@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เกมบันไดงูแสนสนุก (2 ผู้เล่น)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Chonburi&family=Mitr:wght@300;400;500&display=swap');
+        body { font-family: 'Mitr', sans-serif; }
+        .heading-font { font-family: 'Chonburi', serif; }
+        .emoji-token { display: inline-block; transition: transform 0.3s ease; }
+    </style>
+</head>
+<body class="bg-amber-50 min-h-screen flex flex-col items-center justify-center p-4 select-none">
+
+    <div class="max-w-md w-full bg-white rounded-3xl shadow-xl border-4 border-amber-200 p-4 text-center">
+        <!-- หัวข้อเกม -->
+        <h1 class="heading-font text-3xl text-pink-500 mb-2 drop-shadow-sm">🎲 บันไดงูแสนสนุก 🐍</h1>
+        
+        <!-- แถบแสดงสถานะตาเดิน -->
+        <div id="turn-display" class="bg-rose-100 text-rose-700 py-2 px-4 rounded-full text-lg font-bold mb-4 shadow-sm transition-colors duration-300">
+            ตาน้องหมี 🐻 จ้า!
+        </div>
+
+        <!-- กระดานเกม -->
+        <div id="board" class="grid grid-cols-6 gap-1.5 bg-amber-100 p-2 rounded-2xl aspect-square mb-4">
+            <!-- JavaScript จะมาสร้างช่องตรงนี้ -->
+        </div>
+
+        <!-- แผงควบคุมและสถานะ -->
+        <div class="bg-sky-50 rounded-2xl p-4 border-2 border-sky-100 flex flex-col items-center gap-3">
+            <div id="status" class="text-base font-medium text-sky-800 min-h-[24px]">
+                กดปุ่มเพื่อเริ่มโยนลูกเต๋าได้เลย!
+            </div>
+            
+            <div class="flex items-center gap-4">
+                <div id="dice-view" class="w-14 h-14 bg-white border-4 border-amber-400 rounded-2xl flex items-center justify-center text-3xl font-bold text-amber-500 shadow-inner">
+                    ⚀
+                </div>
+                <button id="roll-btn" class="px-6 py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold text-lg rounded-full shadow-lg transform active:scale-95 transition-all cursor-pointer">
+                    🎲 ทอดลูกเต๋า
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ตั้งค่าบอร์ดเกม
+        const BOARD_SIZE = 36;
+        const COLS = 6;
+        
+        // ข้อมูลผู้เล่น 2 คน
+        let players = [
+            { id: 0, name: 'น้องหมี', emoji: '🐻', pos: 1, colorClass: 'bg-rose-100 text-rose-700', btnClass: 'bg-rose-500 hover:bg-rose-600' },
+            { id: 1, name: 'น้องกระต่าย', emoji: '🐰', pos: 1, colorClass: 'bg-sky-100 text-sky-700', btnClass: 'bg-sky-500 hover:bg-sky-600' }
+        ];
+        
+        let currentTurn = 0; // 0 = น้องหมี, 1 = น้องกระต่าย
+        let isAnimating = false; // ป้องกันการกดซ้ำตอนตัวละครกำลังเดิน
+        let gameEnded = false;
+
+        // กำหนดตำแหน่งบันไดและงู (ปรับให้ตกไม่ไกลมากสำหรับเด็ก)
+        const ladders = { 4: 15, 13: 24, 20: 31 }; // ขึ้นบันได
+        const snakes = { 17: 9, 27: 16, 34: 25 };  // สไลเดอร์งู
+
+        const bgColors = [
+            'bg-pink-200 border-pink-300 text-pink-700',
+            'bg-orange-200 border-orange-300 text-orange-700',
+            'bg-yellow-200 border-yellow-300 text-yellow-700',
+            'bg-green-200 border-green-300 text-green-700',
+            'bg-cyan-200 border-cyan-300 text-cyan-700',
+            'bg-purple-200 border-purple-300 text-purple-700'
+        ];
+
+        // --- ระบบเสียงจำลอง ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playTone(freq, type, duration) {
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function playLadderSound() {
+            playTone(400, 'sine', 0.1);
+            setTimeout(() => playTone(600, 'sine', 0.15), 150);
+            setTimeout(() => playTone(800, 'sine', 0.2), 300);
+        }
+
+        function playSnakeSound() {
+            playTone(400, 'sawtooth', 0.2);
+            setTimeout(() => playTone(300, 'sawtooth', 0.25), 200);
+        }
+
+        function playDiceSound() {
+            playTone(200, 'triangle', 0.05);
+            setTimeout(() => playTone(250, 'triangle', 0.05), 80);
+        }
+
+        function playWinSound() {
+            [523, 659, 783, 1046].forEach((freq, i) => {
+                setTimeout(() => playTone(freq, 'sine', 0.2), i * 150);
+            });
+        }
+
+        // --- สร้างกระดาน ---
+        function createBoard() {
+            const board = document.getElementById('board');
+            board.innerHTML = '';
+            
+            for (let row = COLS - 1; row >= 0; row--) {
+                for (let col = 0; col < COLS; col++) {
+                    let cellNum = (row % 2 === 1) ? (row * COLS) + (COLS - col) : (row * COLS) + (col + 1);
+
+                    const cell = document.createElement('div');
+                    const colorClass = bgColors[(cellNum - 1) % bgColors.length];
+                    
+                    cell.className = `relative flex flex-col items-center justify-center rounded-xl border-2 font-bold text-sm aspect-square shadow-sm ${colorClass}`;
+                    
+                    let infoText = '';
+                    if (ladders[cellNum]) infoText = '🚀 ขึ้น';
+                    if (snakes[cellNum]) infoText = '🐍 ลง';
+                    if (cellNum === 36) infoText = '👑';
+
+                    cell.innerHTML = `
+                        <span class="absolute top-0.5 left-1 text-[10px] opacity-70">${cellNum}</span>
+                        <span class="text-[10px] mt-2 font-normal block opacity-80">${infoText}</span>
+                        <div id="spot-${cellNum}" class="absolute bottom-0.5 w-full flex justify-center gap-0.5 text-lg"></div>
+                    `;
+                    board.appendChild(cell);
+                }
+            }
+        }
+
+        // --- อัปเดตตำแหน่งผู้เล่น ---
+        function updateBoard() {
+            for (let i = 1; i <= BOARD_SIZE; i++) {
+                document.getElementById(`spot-${i}`).innerHTML = '';
+            }
+            players.forEach(p => {
+                const spot = document.getElementById(`spot-${p.pos}`);
+                if (spot) {
+                    spot.innerHTML += `<span class="emoji-token">${p.emoji}</span>`;
+                }
+            });
+        }
+
+        // --- เปลี่ยนตาผู้เล่น ---
+        function switchTurn() {
+            currentTurn = currentTurn === 0 ? 1 : 0;
+            const p = players[currentTurn];
+            
+            const turnDisplay = document.getElementById('turn-display');
+            turnDisplay.className = `${p.colorClass} py-2 px-4 rounded-full text-lg font-bold mb-4 shadow-sm transition-colors duration-300`;
+            turnDisplay.innerHTML = `ตา ${p.name} ${p.emoji} จ้า!`;
+
+            const btn = document.getElementById('roll-btn');
+            btn.className = `px-6 py-3 text-white font-bold text-lg rounded-full shadow-lg transform active:scale-95 transition-all cursor-pointer ${p.btnClass}`;
+        }
+
+        // --- ระบบเล่นเกม ---
+        const diceFaces = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+        
+        document.getElementById('roll-btn').addEventListener('click', () => {
+            if (isAnimating) return; // ป้องกันการกดรัวๆ
+            
+            if (gameEnded) {
+                // รีเซ็ตเกมใหม่
+                players[0].pos = 1;
+                players[1].pos = 1;
+                currentTurn = 1; // สลับเพื่อให้หมีเริ่มก่อนตอนเรียก switchTurn
+                gameEnded = false;
+                document.getElementById('status').innerText = 'เริ่มเกมใหม่ลุยกันเลย!';
+                document.getElementById('roll-btn').innerText = '🎲 ทอดลูกเต๋า';
+                switchTurn();
+                updateBoard();
+                return;
+            }
+
+            isAnimating = true;
+            playDiceSound();
+            
+            let diceRoll = Math.floor(Math.random() * 6) + 1;
+            document.getElementById('dice-view').innerText = diceFaces[diceRoll - 1];
+
+            let p = players[currentTurn];
+            p.pos += diceRoll;
+
+            // เช็คเส้นชัย
+            if (p.pos >= BOARD_SIZE) {
+                p.pos = BOARD_SIZE;
+                updateBoard();
+                playWinSound();
+                document.getElementById('status').innerHTML = `🎉 เย้! <b>${p.name} ${p.emoji}</b> ถึงปราสาทชนะแล้ว! 👑`;
+                document.getElementById('roll-btn').innerText = '🔄 เล่นอีกครั้ง';
+                gameEnded = true;
+                isAnimating = false;
+                return;
+            }
+
+            document.getElementById('status').innerHTML = `<b>${p.name}</b> เดินหน้า ${diceRoll} ช่อง`;
+            updateBoard();
+
+            // หน่วงเวลาเช็คบันไดและงู
+            setTimeout(() => {
+                if (ladders[p.pos]) {
+                    playLadderSound();
+                    document.getElementById('status').innerHTML = `ว้าว! <b>${p.name}</b> นั่งจรวดขึ้นไปช่อง ${ladders[p.pos]} เลย! 🚀`;
+                    p.pos = ladders[p.pos];
+                    updateBoard();
+                } else if (snakes[p.pos]) {
+                    playSnakeSound();
+                    document.getElementById('status').innerHTML = `อุ๊ย! <b>${p.name}</b> ลื่นสไลเดอร์คุณงูลงมาที่ช่อง ${snakes[p.pos]} จ้า 🐍`;
+                    p.pos = snakes[p.pos];
+                    updateBoard();
+                }
+
+                // หน่วงเวลาให้อ่านข้อความนิดนึง แล้วค่อยเปลี่ยนตา
+                setTimeout(() => {
+                    switchTurn();
+                    isAnimating = false;
+                    document.getElementById('status').innerText = `กดทอดลูกเต๋าได้เลย!`;
+                }, 1200);
+
+            }, 600);
+        });
+
+        // เริ่มเกม
+        createBoard();
+        updateBoard();
+    </script>
+</body>
+</html>
